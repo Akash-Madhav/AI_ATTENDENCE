@@ -120,59 +120,31 @@ python main.py
 4. Upload class image and process attendance.
 5. Open Reports screen to view/export report.
 
-## 10. Common Issues
+## 10. Face Recognition Upgrade (v3.0-SFace)
 
-### A) pip install fails
+The system now uses a professional deep-learning pipeline:
+- **Detection**: YuNet CNN (extracts 5 facial landmarks).
+- **Alignment**: SFace automatically aligns/rotates faces based on landmarks.
+- **Recognition**: SFace 128-dim embeddings for industry-standard accuracy.
 
-Check:
-- Virtual environment is activated.
-- Python version is 3.12, 3.13, or 3.14.
-- Internet connection is available.
+The engine status is logged to the terminal on startup. Look for:
+`[INFO] FaceEngine Version: 3.0-SFace`
+`[SUCCESS] YuNet Detector loaded.`
+`[SUCCESS] SFace Recognizer loaded.`
 
-Fix:
+## 11. Common Issues
 
-```powershell
-deactivate
-if (Test-Path .\venv) { Remove-Item .\venv -Recurse -Force }
-py -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-```
+### A) Face not recognized
+- Ensure the student photo in `assets/student_photos` is clear.
+- Increase `MATCH_THRESHOLD` in `.env` if matching is too strict (default 0.8).
 
-### B) "Unknown database 'attendance_db'"
+### B) MySQL connection error
+- Check: MySQL service is running: `net start MySQL80`
+- Check: `.env` credentials are correct.
 
-Run the database setup script:
-
-```powershell
-python setup_database.py
-```
-
-Then:
-
-```powershell
-python main.py
-```
-
-### C) MySQL connection error
-
-Check:
-- MySQL service is running: `net start MySQL80`
-- `.env` credentials are correct
-- Database was initialized via `python setup_database.py`
-
-### D) verify_setup fails
-
-Run:
-
-```powershell
-pip install -r requirements.txt
-venv\Scripts\python verify_setup.py
-```
-
-## 11. Daily Run Commands
+## 12. Daily Run Commands
 
 ```powershell
 cd C:\Users\akash\AI_ATTENDENCE
-.\venv\Scripts\activate
-python main.py
+.\run.bat
 ```

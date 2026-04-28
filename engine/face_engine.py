@@ -2,117 +2,95 @@
 
 import cv2
 import numpy as np
-import os
 import pickle
+import os
 from scipy.spatial import KDTree
 from config import CONFIG
 
 
 class FaceEngine:
+    VERSION = "3.0-SFace"
     """
-    Face pipeline using OpenCV (Python 3.14 compatible):
-      Stage 1 — OpenCV Haar Cascade: face detection → bounding boxes
-      Stage 2 — OpenCV: normalized face crop as encoding vector
+    High-accuracy Face Pipeline (Industry Standard):
+      Stage 1 — YuNet (CNN): Face detection + 5 landmarks
+      Stage 2 — SFace (CNN): Face alignment + 128-dim feature extraction
+      Stage 3 — KDTree: Vector matching via Cosine Similarity (normalized Euclidean)
 
-    For matching: SciPy KDTree over all registered student encodings.
-    Threshold: Euclidean distance < 0.6 → match  (tunable in config)
-    
-    Note: Uses OpenCV Haar Cascade instead of MediaPipe for full Python 3.14 compatibility.
+    Note: This pipeline is highly robust to blur, lighting, and angles.
     """
 
     def __init__(self):
-        # YuNet face detector (better than Haar Cascade for group photos)
-        detector_path = None
+        print(f"[INFO] FaceEngine Version: {self.VERSION}", flush=True)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        models_dir = os.path.join(os.path.dirname(current_dir), "assets", "models")
         
-        # Try local path first
-        local_model = "assets/models/face_detection_yunet_2023mar.onnx"
-        if os.path.exists(local_model):
-            detector_path = local_model
-        else:
-            # Try OpenCV data directory
-            cv_model = cv2.data.haarcascades.replace('haarcascades', '') + 'face_detection_yunet_2023mar.onnx'
-            if os.path.exists(cv_model):
-                detector_path = cv_model
-        
-        self._use_yunet = False
-        if detector_path:
+        # 1. Initialize YuNet (Detector)
+        yunet_path = os.path.join(models_dir, "face_detection_yunet_2023mar.onnx")
+        self._yunet = None
+        if os.path.exists(yunet_path):
             try:
-                self._detector = cv2.FaceDetectorYN.create(
-                    detector_path,
-                    "",
-                    (320, 320),
-                    score_threshold=0.5,
-                    nms_threshold=0.3,
-                    top_k=5000
+                self._yunet = cv2.FaceDetectorYN.create(
+                    model=yunet_path, config="", input_size=(320, 320),
+                    score_threshold=0.6, nms_threshold=0.3, top_k=5000
                 )
-                self._use_yunet = True
-                print("✓ YuNet detector loaded successfully")
+                print("[SUCCESS] YuNet Detector loaded.", flush=True)
             except Exception as e:
-                print(f"⚠ YuNet initialization failed: {e}, falling back to Haar Cascade")
-        
-        if not self._use_yunet:
-            # Fallback to Haar Cascade
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            self._detector = cv2.CascadeClassifier(cascade_path)
-            print("ℹ Using Haar Cascade detector (download YuNet model for better accuracy)")
-            print("  Run: python download_yunet_model.py")
-        
+                print(f"[ERROR] YuNet Init Failed: {e}", flush=True)
+
+        # 2. Initialize SFace (Recognizer)
+        sface_path = os.path.join(models_dir, "face_recognition_sface_2021dec.onnx")
+        self._sface = None
+        if os.path.exists(sface_path):
+            try:
+                self._sface = cv2.FaceRecognizerSF.create(model=sface_path, config="")
+                print("[SUCCESS] SFace Recognizer loaded.", flush=True)
+            except Exception as e:
+                print(f"[ERROR] SFace Init Failed: {e}", flush=True)
+
         self._kdtree = None
         self._student_ids = []
-        self.threshold = float(CONFIG.get("MATCH_THRESHOLD", 0.65))
-        self.face_size = (64, 64)  # Fixed size for consistent encodings
+        # Threshold for SFace: Distance < 0.8 is a strong match.
+        # Confidence is calculated as (1.0 - distance).
+        self.threshold = float(CONFIG.get("MATCH_THRESHOLD", 0.8))
 
     # ── Encoding ──────────────────────────────────────────────────────
 
-    def _extract_face_encoding(self, rgb: np.ndarray, location: tuple) -> np.ndarray:
+    def _extract_face_encoding(self, rgb: np.ndarray, face_info: np.ndarray) -> np.ndarray:
         """
-        Extract a normalized encoding from a detected face region.
-        Crops face, resizes to fixed size, converts to grayscale,
-        and returns as flattened normalized vector.
+        Use SFace to align and extract a 128-dim feature vector.
+        face_info: The detection result for a single face (including landmarks).
         """
-        top, right, bottom, left = location
-        
-        # Ensure bounds are valid
-        h, w = rgb.shape[:2]
-        top = max(0, top)
-        left = max(0, left)
-        right = min(w, right)
-        bottom = min(h, bottom)
-        
-        # Crop face region
-        face_crop = rgb[top:bottom, left:right]
-        if face_crop.size == 0:
-            return np.zeros(self.face_size[0] * self.face_size[1], dtype=np.float32)
-        
-        # Convert to grayscale and resize to fixed size
-        gray = cv2.cvtColor(face_crop, cv2.COLOR_RGB2GRAY)
-        resized = cv2.resize(gray, self.face_size)
-        
-        # Apply histogram equalization for robustness
-        equalized = cv2.equalizeHist(resized)
-        
-        # Normalize to [0, 1] and flatten
-        normalized = equalized.astype(np.float32) / 255.0
-        encoding = normalized.flatten()
-        
-        return encoding
+        if not self._sface or face_info is None:
+            return np.zeros(128, dtype=np.float32)
+
+        try:
+            # 1. Align and crop face using landmarks
+            aligned_face = self._sface.alignCrop(rgb, face_info)
+            
+            # 2. Extract feature vector
+            feature = self._sface.feature(aligned_face)
+            
+            # 3. Normalize to unit length (makes Euclidean distance equivalent to Cosine)
+            cv2.normalize(feature, feature)
+            
+            return feature.flatten()
+        except Exception as e:
+            print(f"[ERROR] Encoding failed: {e}")
+            return np.zeros(128, dtype=np.float32)
 
     def encode_image(self, image_bgr: np.ndarray) -> list:
-        """
-        Given a BGR image (from cv2.imread), return a list of encodings
-        — one per detected face. Empty list if no faces found.
-        """
+        """Extract encodings from a BGR image."""
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        preprocessed = self._preprocess(rgb)
-
-        # Stage 1: MediaPipe detection → face locations
-        locations = self._mediapipe_locations(preprocessed)
-
-        if not locations:
+        
+        # Detect faces with landmarks
+        results = self._detect_faces_raw(rgb)
+        if results is None:
             return []
 
-        # Stage 2: OpenCV-based encodings at detected locations
-        encodings = [self._extract_face_encoding(preprocessed, loc) for loc in locations]
+        encodings = []
+        for face in results:
+            enc = self._extract_face_encoding(rgb, face)
+            encodings.append(enc)
         return encodings
 
     def encode_from_path(self, image_path: str) -> list:
@@ -160,48 +138,42 @@ class FaceEngine:
 
     # ── Classroom Analysis ─────────────────────────────────────────────
 
-    def analyse_classroom(
-        self,
-        image_bgr: np.ndarray,
-        all_students: list
-    ) -> dict:
-        """
-        Full pipeline for a classroom photo.
-        """
+    def analyse_classroom(self, image_bgr: np.ndarray, all_students: list) -> dict:
+        """Full pipeline for a classroom photo using SFace."""
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        preprocessed = self._preprocess(rgb)
-        locations = self._mediapipe_locations(preprocessed)
-
-        if not locations:
-            annotated = image_bgr.copy()
-            return {"present": [], "unknown": [], "annotated_img": annotated}
-
-        encodings = [self._extract_face_encoding(preprocessed, loc) for loc in locations]
+        
+        # Detect faces with landmarks
+        raw_faces = self._detect_faces_raw(rgb)
+        if raw_faces is None:
+            return {"present": [], "unknown": [], "annotated_img": image_bgr.copy()}
 
         present = []
         unknown = []
         seen_ids = set()
-
         annotated = image_bgr.copy()
 
-        for (top, right, bottom, left), encoding in zip(locations, encodings):
+        for face in raw_faces:
+            # 1. Get BBox
+            x, y, w, h = face[:4].astype(int)
+            
+            # 2. Encode
+            encoding = self._extract_face_encoding(rgb, face)
+            
+            # 3. Match
             student_id, confidence = self.identify_face(encoding)
-            bbox = (left, top, right - left, bottom - top)
+            bbox = (x, y, w, h)
 
             if student_id and student_id not in seen_ids:
                 seen_ids.add(student_id)
                 present.append({"student_id": student_id, "confidence": confidence, "bbox": bbox})
-                # Draw green box
-                cv2.rectangle(annotated, (left, top), (right, bottom), (0, 200, 0), 2)
-                label = f"ID:{student_id} ({confidence:.0%})"
-                cv2.putText(annotated, label, (left, top - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
+                cv2.rectangle(annotated, (x, y), (x+w, y+h), (0, 200, 0), 2)
+                cv2.putText(annotated, f"ID:{student_id}", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
             else:
                 unknown.append({"bbox": bbox})
-                # Draw red box
-                cv2.rectangle(annotated, (left, top), (right, bottom), (0, 0, 220), 2)
-                cv2.putText(annotated, "Unknown", (left, top - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 220), 1)
+                cv2.rectangle(annotated, (x, y), (x+w, y+h), (0, 0, 220), 2)
+                cv2.putText(annotated, "Unknown", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 220), 2)
 
         return {"present": present, "unknown": unknown, "annotated_img": annotated}
 
@@ -217,72 +189,34 @@ class FaceEngine:
 
     # ── Internal Helpers ───────────────────────────────────────────────
 
-    def _preprocess(self, rgb: np.ndarray) -> np.ndarray:
+    def _detect_faces_raw(self, rgb: np.ndarray) -> np.ndarray:
         """
-        Resize large images and apply CLAHE for contrast normalisation.
+        Detect faces and return raw results (including landmarks for alignment).
         """
-        h, w = rgb.shape[:2]
-        max_dim = 1280
-        if max(h, w) > max_dim:
-            scale = max_dim / max(h, w)
-            rgb = cv2.resize(rgb, (int(w * scale), int(h * scale)))
-
-        # CLAHE on L channel of LAB
-        lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        lab[:, :, 0] = clahe.apply(lab[:, :, 0])
-        return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-
-    def _mediapipe_locations(self, rgb: np.ndarray) -> list:
-        """
-        Run YuNet face detection (or Haar Cascade fallback) and return locations in (top, right, bottom, left) format.
-        """
-        if not hasattr(self, '_use_yunet'):
-            self._use_yunet = False
+        if not self._yunet:
+            return None
         
-        if self._use_yunet:
-            # YuNet detection
+        try:
             h, w = rgb.shape[:2]
-            self._detector.setInputSize((w, h))
+            self._yunet.setInputSize((w, h))
+            _, faces = self._yunet.detect(rgb)
+            return faces
+        except Exception as e:
+            print(f"[ERROR] YuNet Raw Detection Failed: {e}", flush=True)
+            return None
+
+    def _detect_faces(self, rgb: np.ndarray) -> list:
+        """
+        Legacy/Simplified face detection. Returns (top, right, bottom, left).
+        Now uses YuNet primary with raw data extraction.
+        """
+        raw = self._detect_faces_raw(rgb)
+        if raw is None:
+            return []
             
-            # Convert RGB to BGR for YuNet
-            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            _, faces = self._detector.detect(bgr)
-            
-            if faces is None or len(faces) == 0:
-                return []
-            
-            # Convert YuNet format [x, y, w, h, conf, ...] to (top, right, bottom, left)
-            locations = []
-            for face in faces:
-                x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-                top = max(0, y)
-                left = max(0, x)
-                bottom = min(h, y + fh)
-                right = min(w, x + fw)
-                locations.append((top, right, bottom, left))
-            
-            return locations
-        else:
-            # Haar Cascade fallback
-            gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-            faces = self._detector.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(20, 20),
-                maxSize=(500, 500)
-            )
-            
-            if len(faces) == 0:
-                return []
-            
-            locations = []
-            for (x, y, w, h) in faces:
-                top = y
-                right = x + w
-                bottom = y + h
-                left = x
-                locations.append((top, right, bottom, left))
-            
-            return locations
+        locations = []
+        for face in raw:
+            x, y, w, h = face[:4].astype(int)
+            locations.append((y, x+w, y+h, x))
+        return locations
+
