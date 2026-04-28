@@ -2,6 +2,7 @@
 
 import cv2
 import numpy as np
+import os
 import pickle
 from scipy.spatial import KDTree
 from config import CONFIG
@@ -20,14 +21,46 @@ class FaceEngine:
     """
 
     def __init__(self):
-        # Load Haar Cascade classifier for face detection
-        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        self._detector = cv2.CascadeClassifier(cascade_path)
+        # YuNet face detector (better than Haar Cascade for group photos)
+        detector_path = None
+        
+        # Try local path first
+        local_model = "assets/models/face_detection_yunet_2023mar.onnx"
+        if os.path.exists(local_model):
+            detector_path = local_model
+        else:
+            # Try OpenCV data directory
+            cv_model = cv2.data.haarcascades.replace('haarcascades', '') + 'face_detection_yunet_2023mar.onnx'
+            if os.path.exists(cv_model):
+                detector_path = cv_model
+        
+        self._use_yunet = False
+        if detector_path:
+            try:
+                self._detector = cv2.FaceDetectorYN.create(
+                    detector_path,
+                    "",
+                    (320, 320),
+                    score_threshold=0.5,
+                    nms_threshold=0.3,
+                    top_k=5000
+                )
+                self._use_yunet = True
+                print("✓ YuNet detector loaded successfully")
+            except Exception as e:
+                print(f"⚠ YuNet initialization failed: {e}, falling back to Haar Cascade")
+        
+        if not self._use_yunet:
+            # Fallback to Haar Cascade
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            self._detector = cv2.CascadeClassifier(cascade_path)
+            print("ℹ Using Haar Cascade detector (download YuNet model for better accuracy)")
+            print("  Run: python download_yunet_model.py")
         
         self._kdtree = None
         self._student_ids = []
-        self.threshold = float(CONFIG.get("MATCH_THRESHOLD", 0.6))
-        self.face_size = (128, 128)  # Fixed size for consistent encodings
+        self.threshold = float(CONFIG.get("MATCH_THRESHOLD", 0.65))
+        self.face_size = (64, 64)  # Fixed size for consistent encodings
 
     # ── Encoding ──────────────────────────────────────────────────────
 
@@ -202,30 +235,54 @@ class FaceEngine:
 
     def _mediapipe_locations(self, rgb: np.ndarray) -> list:
         """
-        Run OpenCV Haar Cascade face detection and return locations in (top, right, bottom, left) format.
+        Run YuNet face detection (or Haar Cascade fallback) and return locations in (top, right, bottom, left) format.
         """
-        # Convert to grayscale for detection
-        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        if not hasattr(self, '_use_yunet'):
+            self._use_yunet = False
         
-        # Detect faces
-        faces = self._detector.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(20, 20),
-            maxSize=(500, 500)
-        )
-        
-        if len(faces) == 0:
-            return []
-        
-        # Convert (x, y, w, h) to (top, right, bottom, left) format
-        locations = []
-        for (x, y, w, h) in faces:
-            top = y
-            right = x + w
-            bottom = y + h
-            left = x
-            locations.append((top, right, bottom, left))
-        
-        return locations
+        if self._use_yunet:
+            # YuNet detection
+            h, w = rgb.shape[:2]
+            self._detector.setInputSize((w, h))
+            
+            # Convert RGB to BGR for YuNet
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            _, faces = self._detector.detect(bgr)
+            
+            if faces is None or len(faces) == 0:
+                return []
+            
+            # Convert YuNet format [x, y, w, h, conf, ...] to (top, right, bottom, left)
+            locations = []
+            for face in faces:
+                x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+                top = max(0, y)
+                left = max(0, x)
+                bottom = min(h, y + fh)
+                right = min(w, x + fw)
+                locations.append((top, right, bottom, left))
+            
+            return locations
+        else:
+            # Haar Cascade fallback
+            gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+            faces = self._detector.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(20, 20),
+                maxSize=(500, 500)
+            )
+            
+            if len(faces) == 0:
+                return []
+            
+            locations = []
+            for (x, y, w, h) in faces:
+                top = y
+                right = x + w
+                bottom = y + h
+                left = x
+                locations.append((top, right, bottom, left))
+            
+            return locations

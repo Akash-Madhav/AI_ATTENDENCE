@@ -19,12 +19,12 @@ CREATE TABLE IF NOT EXISTS students (
 );
 
 -- ─────────────────────────────────────────────
--- Face encodings (128-dim float32 stored as BLOB)
+-- Face encodings (normalized 64x64 face stored as LONGBLOB)
 -- ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS face_encodings (
   id          INT AUTO_INCREMENT PRIMARY KEY,
   student_id  INT NOT NULL,
-  encoding    BLOB NOT NULL,
+  encoding    LONGBLOB NOT NULL,
   FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
 );
 
