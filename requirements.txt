@@ -1,0 +1,17 @@
+# AI / Vision
+numpy>=1.24.0
+opencv-python>=4.8.0
+
+# Database
+mysql-connector-python>=8.0.0
+pandas>=2.0.0
+sqlalchemy>=2.0.0
+
+# UI
+ttkbootstrap>=1.10.0
+Pillow>=10.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+openpyxl>=3.1.0
+scipy>=1.10.0
