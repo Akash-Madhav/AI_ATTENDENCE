@@ -131,8 +131,12 @@ class FaceEngine:
             return None, 0.0
 
         distance, idx = self._kdtree.query(encoding)
+        print(f"[DEBUG] Matching result: Distance={distance:.4f} (Threshold={self.threshold})", flush=True)
+        
         if distance < self.threshold:
-            confidence = round(1.0 - distance, 4)
+            # Squared distance to Cosine Similarity conversion: similarity = 1 - (d^2)/2
+            sim = 1.0 - (float(distance)**2 / 2.0)
+            confidence = round(max(0, sim), 4)
             return self._student_ids[idx], confidence
         return None, 0.0
 
