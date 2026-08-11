@@ -1,8 +1,10 @@
-# Execution Guide
+# Execution Guide & Model Architecture
 
-This document explains how to set up and run the AI Attendance System on Windows.
+This document explains how to set up, verify, and run the **AI Attendance System** on Windows, as well as the deep-learning models powering the facial recognition engine.
 
-## Quick Start (Python 3.14 Compatible)
+---
+
+## Quick Start (Python 3.12 / 3.13 / 3.14)
 
 ```powershell
 cd C:\Users\akash\AI_ATTENDENCE
@@ -11,138 +13,194 @@ py -m venv venv
 python --version
 pip install -r requirements.txt
 python setup_database.py
-venv\Scripts\python verify_setup.py
+python verify_setup.py
 ```
 
-If successful, then:
+If setup verification passes:
 
 ```powershell
 python main.py
 ```
 
+---
+
 ## 1. Prerequisites
 
-- Python 3.12, 3.13, or 3.14
-- MySQL 8.x running locally
-- PowerShell or Command Prompt
+- **Python**: 3.12, 3.13, or 3.14 (64-bit recommended)
+- **Database**: MySQL 8.x running locally (Service name typically `MySQL80` or `MySQL`)
+- **Shell**: PowerShell or Command Prompt
 
-## 2. Open Project Folder
+---
 
+## 2. Setup & Execution Steps
+
+### Step 1: Open Project Folder
 ```powershell
 cd C:\Users\akash\AI_ATTENDENCE
 ```
 
-## 3. Create Virtual Environment
-
+### Step 2: Create & Activate Virtual Environment
 ```powershell
 py -m venv venv
-```
-
-Activate:
-
-```powershell
 .\venv\Scripts\activate
 ```
 
-Verify version:
-
-```powershell
-python --version
-```
-
-Expected: `Python 3.12.x`, `3.13.x`, or `3.14.x`
-
-## 4. Install Dependencies
-
-Preferred:
-
+### Step 3: Install Dependencies
 ```powershell
 pip install -r requirements.txt
 ```
+*(Or run `.\install_packages.bat`)*
 
-Or use the installer script:
-
-```powershell
-.\install_packages.bat
-```
-
-## 5. Configure Environment
-
-Edit `.env` and set DB credentials:
-
+### Step 4: Configure Database & Environment
+Ensure `.env` exists in the root directory with correct MySQL credentials:
 ```env
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=attendance_db
 DB_USER=root
-DB_PASSWORD=your_password
+DB_PASSWORD=your_mysql_password
 PHOTO_STORE=assets/student_photos
-MATCH_THRESHOLD=0.5
+MATCH_THRESHOLD=0.8
 ```
 
-## 6. Initialize Database
-
-Run setup script:
-
+### Step 5: Initialize Database Schema
 ```powershell
 python setup_database.py
 ```
+This reads `db/schema.sql` and creates `attendance_db` along with all required tables (`students`, `attendance_sessions`, `attendance_records`).
 
-This reads `db/schema.sql` and creates the database and tables via Python (works on all systems).
-
-## 7. Verify Setup
-
+### Step 6: Verify Setup
 ```powershell
-venv\Scripts\python verify_setup.py
+python verify_setup.py
 ```
+This script checks:
+1. Python dependencies (`opencv-python`, `numpy`, `mysql-connector-python`, `pandas`, `sqlalchemy`, `ttkbootstrap`, `scipy`, `python-dotenv`).
+2. AI Model files availability (`assets/models/`).
+3. Photo store directory readiness (`assets/student_photos/`).
+4. Active MySQL connection and database schema verification.
 
-If successful, it should report setup passed.
-
-## 8. Run Application
-
-Option A:
-
-```powershell
-.\run.bat
-```
-
-Option B:
-
+### Step 7: Launch Application
+Option A (PowerShell / CMD):
 ```powershell
 python main.py
 ```
 
-## 9. First Usage Flow
+Option B (Batch launcher):
+```powershell
+.\run.bat
+```
 
-1. Open Register Student screen.
-2. Add student details and 1 to 5 photos.
-3. Open Take Attendance screen.
-4. Upload class image and process attendance.
-5. Open Reports screen to view/export report.
+---
 
-## 10. Face Recognition Upgrade (v3.0-SFace)
+## 3. The 2 AI Models & Their Purpose
 
-The system now uses a professional deep-learning pipeline:
-- **Detection**: YuNet CNN (extracts 5 facial landmarks).
-- **Alignment**: SFace automatically aligns/rotates faces based on landmarks.
-- **Recognition**: SFace 128-dim embeddings for industry-standard accuracy.
+The AI Attendance System operates on a **2-Stage Deep Learning Pipeline** using OpenCV ONNX models.
 
-The engine status is logged to the terminal on startup. Look for:
-`[INFO] FaceEngine Version: 3.0-SFace`
-`[SUCCESS] YuNet Detector loaded.`
-`[SUCCESS] SFace Recognizer loaded.`
+| Model File | Model Name | Role / Purpose |
+| :--- | :--- | :--- |
+| `face_detection_yunet_2023mar.onnx` | **YuNet** | **Stage 1: Deep Learning Face Detection & Landmark Extraction** |
+| `face_recognition_sface_2021dec.onnx` | **SFace** | **Stage 2: Facial Alignment & 128-Dim Feature Vector Extraction** |
 
-## 11. Common Issues
+---
 
-### A) Face not recognized
-- Ensure the student photo in `assets/student_photos` is clear.
-- Increase `MATCH_THRESHOLD` in `.env` if matching is too strict (default 0.8).
+### Model 1: YuNet Detector (`face_detection_yunet_2023mar.onnx`)
 
-### B) MySQL connection error
-- Check: MySQL service is running: `net start MySQL80`
-- Check: `.env` credentials are correct.
+- **Architecture**: Lightweight, real-time Convolutional Neural Network (CNN) face detector.
+- **Model File**: `assets/models/face_detection_yunet_2023mar.onnx` (approx. 232 KB)
+- **Primary Purpose**: 
+  - Detects all human faces in a camera feed or classroom image, regardless of scale, lighting, or minor rotation.
+  - Computes exact **bounding boxes** `(x, y, w, h)` for each detected face.
+  - Extracts **5 key facial landmarks**:
+    1. Right Eye center
+    2. Left Eye center
+    3. Nose tip
+    4. Right Mouth corner
+    5. Left Mouth corner
 
-## 12. Daily Run Commands
+- **Why It Is Used**: YuNet is extremely fast, highly accurate, and designed specifically to detect multiple crowded faces simultaneously (ideal for classroom attendance photos) while outputting spatial landmarks needed for facial alignment.
+
+---
+
+### Model 2: SFace Recognizer (`face_recognition_sface_2021dec.onnx`)
+
+- **Architecture**: Deep Neural Network trained for facial recognition and metric learning.
+- **Model File**: `assets/models/face_recognition_sface_2021dec.onnx` (approx. 38.6 MB)
+- **Primary Purpose**:
+  1. **Facial Alignment (`alignCrop`)**: Uses the 5 landmarks output by YuNet to crop, rotate, scale, and align the detected face into a standardized 112x112 pixel normalized view.
+  2. **Embedding Extraction (`feature`)**: Converts the aligned face image into a compact **128-dimensional feature embedding vector**.
+  3. **Unit Normalization**: Normalizes the feature vector so that Euclidean distance corresponds directly to Cosine Similarity.
+
+- **Why It Is Used**: SFace generates invariant facial embeddings that represent unique human facial features. This allows comparing faces across different photos regardless of head posture, expressions, or minor lighting variations.
+
+---
+
+### How The 2 Models Work Together in Code (`engine/face_engine.py`)
+
+```
+   [ Input Image (Classroom / Student Photo) ]
+                       │
+                       ▼
+    ┌─────────────────────────────────────┐
+    │  Model 1: YuNet (Face Detector)     │
+    └─────────────────────────────────────┘
+                       │
+     Bounding Boxes + 5 Facial Landmarks
+                       │
+                       ▼
+    ┌─────────────────────────────────────┐
+    │  Model 2: SFace (Recognizer)        │
+    │  1. Landmark-based Face Alignment   │
+    │  2. 128-dim Feature Vector Extraction│
+    └─────────────────────────────────────┘
+                       │
+         128-dim Normalized Feature Vector
+                       │
+                       ▼
+    ┌─────────────────────────────────────┐
+    │  SciPy KDTree Matcher (Vector Index)│
+    │  Cosine Similarity Distance Query   │
+    └─────────────────────────────────────┘
+                       │
+                       ▼
+       [ Identified Student ID & Attendance ]
+```
+
+1. **Detection**: `YuNet` scans the classroom image and finds face bounding boxes along with 5 facial landmarks.
+2. **Alignment & Feature Extraction**: For every detected face, `SFace` aligns the cropped image using the 5 landmarks and extracts a 128-dimensional numerical representation of the face.
+3. **Database Comparison**: The extracted 128-dim vector is queried against registered student face vectors stored in memory via a `SciPy KDTree` index using Cosine Similarity (`distance < MATCH_THRESHOLD`).
+4. **Attendance Logging**: Matched student IDs are flagged as `Present` with a confidence score (`1.0 - distance`), while unmatched faces are marked as `Unknown`.
+
+---
+
+## 4. First-Time Usage Workflow
+
+1. **Student Registration**:
+   - Go to **Register Student** tab in the UI.
+   - Enter Student Name, Roll Number, Department, and Semester.
+   - Upload 1 to 5 reference photos. The system processes them through **YuNet + SFace** and saves the averaged 128-dim vector into the MySQL database.
+2. **Take Attendance**:
+   - Go to **Take Attendance** tab.
+   - Select Course, Date, and Upload/Capture a classroom image.
+   - Click **Process Attendance**. YuNet and SFace detect all students in the photo and compare them against registered embeddings.
+3. **View & Export Reports**:
+   - Go to **Reports** tab to review attendance records and export data to CSV/Excel formats.
+
+---
+
+## 5. Troubleshooting & FAQs
+
+### Q1: Face Not Recognized?
+- Check if student reference photos in `assets/student_photos` are clear and front-facing.
+- Adjust `MATCH_THRESHOLD` in `.env` (default is `0.8`). Lowering threshold makes matching stricter, raising it allows more relaxed matching.
+
+### Q2: MySQL Access Denied?
+- Make sure MySQL 8.x service is running: `net start MySQL80`
+- Update `.env` with your actual MySQL password (`DB_PASSWORD=...`).
+- Run `python setup_database.py` again.
+
+---
+
+## 6. Daily Startup Command
 
 ```powershell
 cd C:\Users\akash\AI_ATTENDENCE
