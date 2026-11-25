@@ -3,10 +3,10 @@
 import os
 import shutil
 from db.db import get_connection
-from engine.face_engine import FaceEngine
+from engine.face_engine import get_face_engine
 from config import CONFIG
 
-engine = FaceEngine()
+engine = get_face_engine()
 
 
 def register_student(name: str, reg_no: str, department: str, photo_paths: list) -> int:

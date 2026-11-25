@@ -4,11 +4,11 @@ import cv2
 import numpy as np
 from datetime import date, datetime
 from db.db import get_connection
-from engine.face_engine import FaceEngine
+from engine.face_engine import get_face_engine
 from services.student_service import get_all_students, load_all_encodings
 import pandas as pd
 
-engine = FaceEngine()
+engine = get_face_engine()
 
 
 def initialise_engine():

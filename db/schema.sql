@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS attendance_sessions (
   session_date  DATE         NOT NULL,
   session_time  TIME         NOT NULL,
   image_path    VARCHAR(255),
-  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_sessions_date (session_date)
 );
 
 -- ─────────────────────────────────────────────
@@ -53,12 +54,7 @@ CREATE TABLE IF NOT EXISTS attendance_records (
   marked_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_session_student (session_id, student_id),
   FOREIGN KEY (session_id) REFERENCES attendance_sessions(id) ON DELETE CASCADE,
-  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+  INDEX idx_records_session (session_id),
+  INDEX idx_records_student (student_id)
 );
-
--- ─────────────────────────────────────────────
--- Indexes for report queries
--- ─────────────────────────────────────────────
-CREATE INDEX idx_records_session   ON attendance_records(session_id);
-CREATE INDEX idx_records_student   ON attendance_records(student_id);
-CREATE INDEX idx_sessions_date     ON attendance_sessions(session_date);
